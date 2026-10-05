@@ -67,7 +67,7 @@ install -m 755 "$tmp" "$BIN"
 # --- menu entry
 cat > "$DESKTOP" <<EOF
 [Desktop Entry]
-Name=Voice Recorder
+Name=VRec
 Comment=Simple voice recorder
 Exec=${BIN}
 Icon=audio-input-microphone

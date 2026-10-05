@@ -26,7 +26,7 @@ EOF
 
 cat > "$ROOT/usr/share/applications/vrec.desktop" <<EOF
 [Desktop Entry]
-Name=Voice Recorder
+Name=VRec
 Comment=Simple voice recorder
 Exec=vrec
 Icon=audio-input-microphone
