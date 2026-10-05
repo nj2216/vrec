@@ -27,3 +27,4 @@ jobs:
             dist/*.deb
             vrec.py
             install.sh
+            vrec.svg

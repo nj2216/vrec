@@ -15,13 +15,17 @@ BIN_DIR="${HOME}/.local/bin"
 APP_DIR="${HOME}/.local/share/applications"
 BIN="${BIN_DIR}/vrec"
 DESKTOP="${APP_DIR}/vrec.desktop"
-URL="https://raw.githubusercontent.com/${REPO}/${REF}/vrec.py"
+ICON_DIR="${HOME}/.local/share/icons/hicolor/scalable/apps"
+ICON="${ICON_DIR}/vrec.svg"
+BASE_URL="https://raw.githubusercontent.com/${REPO}/${REF}"
+URL="${BASE_URL}/vrec.py"
+ICON_URL="${BASE_URL}/vrec.svg"
 
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 if [[ "${1:-}" == "--uninstall" ]]; then
-    rm -f "$BIN" "$DESKTOP"
+    rm -f "$BIN" "$DESKTOP" "$ICON"
     command -v update-desktop-database >/dev/null && update-desktop-database "$APP_DIR" 2>/dev/null || true
     say "Removed vrec. Your recordings in ~/Recordings were left untouched."
     exit 0
@@ -49,7 +53,7 @@ MSG
 fi
 
 # --- download
-mkdir -p "$BIN_DIR" "$APP_DIR"
+mkdir -p "$BIN_DIR" "$APP_DIR" "$ICON_DIR"
 say "Downloading vrec (${REF})..."
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
@@ -64,13 +68,21 @@ head -n1 "$tmp" | grep -q python || die "downloaded file doesn't look right."
 
 install -m 755 "$tmp" "$BIN"
 
+# icon (optional - the app still works without it)
+if command -v curl >/dev/null; then
+    curl -fsSL "$ICON_URL" -o "$ICON" 2>/dev/null || say "Icon download failed, continuing."
+else
+    wget -qO "$ICON" "$ICON_URL" 2>/dev/null || say "Icon download failed, continuing."
+fi
+command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "${HOME}/.local/share/icons/hicolor" 2>/dev/null || true
+
 # --- menu entry
 cat > "$DESKTOP" <<EOF
 [Desktop Entry]
 Name=VRec
 Comment=Simple voice recorder
 Exec=${BIN}
-Icon=audio-input-microphone
+Icon=vrec
 Terminal=false
 Type=Application
 Categories=AudioVideo;Audio;Recorder;

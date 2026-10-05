@@ -7,9 +7,10 @@ PKG="vrec_${VERSION}_all"
 ROOT="build/${PKG}"
 
 rm -rf "$ROOT"
-mkdir -p "$ROOT/DEBIAN" "$ROOT/usr/bin" "$ROOT/usr/share/applications" dist
+mkdir -p "$ROOT/DEBIAN" "$ROOT/usr/bin" "$ROOT/usr/share/applications" "$ROOT/usr/share/icons/hicolor/scalable/apps" dist
 
 install -m 755 vrec.py "$ROOT/usr/bin/vrec"
+install -m 644 vrec.svg "$ROOT/usr/share/icons/hicolor/scalable/apps/vrec.svg"
 
 cat > "$ROOT/DEBIAN/control" <<EOF
 Package: vrec
@@ -29,7 +30,7 @@ cat > "$ROOT/usr/share/applications/vrec.desktop" <<EOF
 Name=VRec
 Comment=Simple voice recorder
 Exec=vrec
-Icon=audio-input-microphone
+Icon=vrec
 Terminal=false
 Type=Application
 Categories=AudioVideo;Audio;Recorder;

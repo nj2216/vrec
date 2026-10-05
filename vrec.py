@@ -34,7 +34,14 @@ from gi.repository import Gdk, GLib, Gtk
 
 Gst.init(None)
 
+ICON_NAME = "vrec"
+_here = os.path.dirname(os.path.abspath(__file__))
+_local_icon = os.path.join(_here, "vrec.svg")
+
 SAVE_DIR = os.path.expanduser("~/Recordings")
+VERSION = "1.0.0"
+WEBSITE = "https://github.com/nj2216/vrec"
+SEEK_STEP = 10  # seconds for the skip back / forward buttons
 
 CSS = b"""
 .card {
@@ -98,6 +105,46 @@ button.flat-icon {
 button.flat-icon:hover { background-color: alpha(@theme_fg_color, 0.10); }
 list.recordings { background-color: transparent; }
 list.recordings row { border-radius: 10px; padding: 4px 6px; }
+list.recordings row.now { background-color: alpha(#e53935, 0.12); }
+
+button.play {
+    min-width: 48px;
+    min-height: 48px;
+    padding: 0;
+    border-radius: 999px;
+    border: none;
+    background-image: none;
+    background-color: #e53935;
+    color: white;
+    box-shadow: 0 2px 8px alpha(#e53935, 0.40);
+}
+button.play:hover { background-color: #f0524f; }
+
+scale.seek trough {
+    min-height: 6px;
+    border-radius: 3px;
+    border: none;
+    background-color: alpha(@theme_fg_color, 0.14);
+}
+scale.seek highlight {
+    min-height: 6px;
+    border-radius: 3px;
+    border: none;
+    background-image: none;
+    background-color: #e53935;
+}
+scale.seek slider {
+    min-width: 14px;
+    min-height: 14px;
+    margin: -5px;
+    border-radius: 999px;
+    border: none;
+    background-image: none;
+    background-color: #e53935;
+    box-shadow: 0 1px 4px alpha(black, 0.35);
+}
+.player-title { font-weight: bold; }
+.player-time { font-family: monospace; font-size: 11px; opacity: 0.75; }
 """
 
 
@@ -157,7 +204,14 @@ def peak_db(structure):
 class Recorder(Gtk.Window):
     def __init__(self):
         super().__init__(title="Voice Recorder")
-        self.set_default_size(400, 660)
+        self.set_default_size(420, 760)
+        if os.path.exists(_local_icon):  # running from a source checkout
+            try:
+                self.set_icon_from_file(_local_icon)
+            except GLib.Error:
+                pass
+        else:  # installed: icon theme lookup
+            self.set_icon_name(ICON_NAME)
         self.connect("destroy", self.on_quit)
 
         # state
@@ -170,15 +224,23 @@ class Recorder(Gtk.Window):
         self.level = 0.0
         self.devices = []
         self.populating = False
-        self.player = None
-        self.playing_path = None
         self.play_buttons = {}
+        self.rows = {}
+        self.files = []
+
+        # media player state
+        self.player = None
+        self.loaded_path = None
+        self.playing = False
+        self.duration = 0.0
+        self.seek_dragging = False
 
         self.apply_css()
         self.build_ui()
         self.populate_devices()
         self.refresh_list()
         GLib.timeout_add(100, self.tick)
+        GLib.timeout_add(200, self.player_tick)
         self.start_monitor()
 
     # ---------------------------------------------------------------- UI
@@ -199,6 +261,12 @@ class Recorder(Gtk.Window):
         folder_btn.set_tooltip_text("Open recordings folder")
         folder_btn.connect("clicked", self.on_open_folder)
         header.pack_end(folder_btn)
+        about_btn = Gtk.Button.new_from_icon_name(
+            "help-about-symbolic", Gtk.IconSize.BUTTON
+        )
+        about_btn.set_tooltip_text("About")
+        about_btn.connect("clicked", self.on_about)
+        header.pack_end(about_btn)
         self.set_titlebar(header)
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
@@ -286,7 +354,107 @@ class Recorder(Gtk.Window):
         scroller.add(self.listbox)
         root.pack_start(scroller, True, True, 0)
 
+        # --- media player (slides in when a recording is loaded)
+        self.revealer = Gtk.Revealer()
+        self.revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
+        self.revealer.set_reveal_child(False)
+        root.pack_start(self.revealer, False, False, 0)
+        self.revealer.add(self.build_player())
+
         self.update_ui_state()
+
+    def build_player(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.get_style_context().add_class("card")
+
+        # title row + close
+        top = Gtk.Box(spacing=6)
+        self.player_title = Gtk.Label(label="", xalign=0)
+        self.player_title.set_ellipsize(3)  # END
+        self.player_title.get_style_context().add_class("player-title")
+        top.pack_start(self.player_title, True, True, 0)
+        close = Gtk.Button.new_from_icon_name("window-close-symbolic", Gtk.IconSize.BUTTON)
+        close.get_style_context().add_class("flat-icon")
+        close.set_tooltip_text("Close player")
+        close.connect("clicked", lambda *_: self.stop_playback())
+        top.pack_start(close, False, False, 0)
+        box.pack_start(top, False, False, 0)
+
+        # seek bar
+        self.adj = Gtk.Adjustment(value=0, lower=0, upper=1, step_increment=1, page_increment=5)
+        self.seek = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.adj)
+        self.seek.set_draw_value(False)
+        self.seek.get_style_context().add_class("seek")
+        self.seek.connect("change-value", self.on_seek)
+        self.seek.connect("button-press-event", self.on_seek_press)
+        self.seek.connect("button-release-event", self.on_seek_release)
+        box.pack_start(self.seek, False, False, 4)
+
+        # times
+        times = Gtk.Box()
+        self.cur_label = Gtk.Label(label="00:00", xalign=0)
+        self.cur_label.get_style_context().add_class("player-time")
+        self.tot_label = Gtk.Label(label="00:00", xalign=1)
+        self.tot_label.get_style_context().add_class("player-time")
+        times.pack_start(self.cur_label, True, True, 0)
+        times.pack_start(self.tot_label, True, True, 0)
+        box.pack_start(times, False, False, 0)
+
+        # transport row: [volume] [prev  -10  play  +10  next] [spacer]
+        row = Gtk.Box(spacing=4)
+        self.vol = Gtk.VolumeButton()
+        self.vol.set_value(1.0)
+        self.vol.connect("value-changed", self.on_volume)
+        row.pack_start(self.vol, False, False, 0)
+
+        center = Gtk.Box(spacing=4)
+        center.set_halign(Gtk.Align.CENTER)
+        self.prev_btn = self.flat_button("media-skip-backward-symbolic", "Previous recording", self.on_prev)
+        self.back_btn = self.flat_button("media-seek-backward-symbolic", "Back %ds" % SEEK_STEP,
+                                         lambda *_: self.seek_relative(-SEEK_STEP))
+        self.play_btn = Gtk.Button()
+        self.play_btn.get_style_context().add_class("play")
+        self.play_img = Gtk.Image.new_from_icon_name("media-playback-start-symbolic", Gtk.IconSize.LARGE_TOOLBAR)
+        self.play_btn.add(self.play_img)
+        self.play_btn.set_tooltip_text("Play / pause")
+        self.play_btn.connect("clicked", lambda *_: self.toggle_pause())
+        self.fwd_btn = self.flat_button("media-seek-forward-symbolic", "Forward %ds" % SEEK_STEP,
+                                        lambda *_: self.seek_relative(SEEK_STEP))
+        self.next_btn = self.flat_button("media-skip-forward-symbolic", "Next recording", self.on_next)
+        for w in (self.prev_btn, self.back_btn, self.play_btn, self.fwd_btn, self.next_btn):
+            center.pack_start(w, False, False, 0)
+        row.pack_start(center, True, True, 0)
+
+        spacer = Gtk.Box()
+        spacer.set_size_request(36, 1)
+        row.pack_start(spacer, False, False, 0)
+        box.pack_start(row, False, False, 0)
+        return box
+
+    def flat_button(self, icon, tip, cb):
+        b = Gtk.Button.new_from_icon_name(icon, Gtk.IconSize.LARGE_TOOLBAR)
+        b.get_style_context().add_class("flat-icon")
+        b.set_tooltip_text(tip)
+        b.connect("clicked", cb)
+        return b
+
+    def on_about(self, *_):
+        dlg = Gtk.AboutDialog(transient_for=self, modal=True)
+        dlg.set_program_name("Voice Recorder")
+        dlg.set_version(VERSION)
+        dlg.set_logo_icon_name(ICON_NAME)
+        dlg.set_comments(
+            "A simple voice recorder with a live level meter,\n"
+            "pause/resume and a built-in player.\n\n"
+            "Powered by GTK %d.%d and %s"
+            % (Gtk.get_major_version(), Gtk.get_minor_version(), Gst.version_string())
+        )
+        dlg.set_website(WEBSITE)
+        dlg.set_website_label("github.com/nj2216/vrec")
+        dlg.set_authors(["Jeevan"])
+        dlg.set_copyright("© 2026 Jeevan")
+        dlg.run()
+        dlg.destroy()
 
     def update_ui_state(self):
         ctx = self.rec_btn.get_style_context()
@@ -555,14 +723,20 @@ class Recorder(Gtk.Window):
         for child in self.listbox.get_children():
             self.listbox.remove(child)
         self.play_buttons = {}
+        self.rows = {}
         files = glob.glob(os.path.join(SAVE_DIR, "*.wav"))
         files.sort(key=os.path.getmtime, reverse=True)
+        self.files = files
         for path in files:
             self.listbox.add(self.make_row(path))
         self.listbox.show_all()
+        if self.loaded_path and self.loaded_path not in files:
+            self.stop_playback()
+        self.update_play_icons()
 
     def make_row(self, path):
         row = Gtk.ListBoxRow()
+        self.rows[path] = row
         box = Gtk.Box(spacing=6)
         row.add(box)
 
@@ -587,8 +761,8 @@ class Recorder(Gtk.Window):
             "media-playback-start-symbolic", Gtk.IconSize.BUTTON
         )
         play.add(img)
-        play.set_tooltip_text("Play / stop")
-        play.connect("clicked", lambda *_: self.toggle_play(path))
+        play.set_tooltip_text("Play / pause")
+        play.connect("clicked", lambda *_: self.on_row_play(path))
         box.pack_start(play, False, False, 0)
         self.play_buttons[path] = img
 
@@ -615,7 +789,7 @@ class Recorder(Gtk.Window):
         resp = dlg.run()
         dlg.destroy()
         if resp == Gtk.ResponseType.OK:
-            if self.playing_path == path:
+            if self.loaded_path == path:
                 self.stop_playback()
             try:
                 os.remove(path)
@@ -631,11 +805,17 @@ class Recorder(Gtk.Window):
             self.set_status("Could not open folder: %s" % e)
 
     # ---------------------------------------------------------- playback
-    def toggle_play(self, path):
-        was = self.playing_path
-        self.stop_playback()
-        if was == path or self.state != "idle":
+    def on_row_play(self, path):
+        if self.state != "idle":
+            self.set_status("Stop recording before playing.")
             return
+        if path == self.loaded_path:
+            self.toggle_pause()
+        else:
+            self.load_track(path)
+
+    def load_track(self, path):
+        self.stop_playback()
         player = Gst.ElementFactory.make("playbin")
         if player is None:
             self.set_status("Playback needs gst-plugins-base (playbin).")
@@ -644,24 +824,127 @@ class Recorder(Gtk.Window):
         if fake is not None:
             player.set_property("video-sink", fake)
         player.set_property("uri", GLib.filename_to_uri(path, None))
+        player.set_property("volume", self.vol.get_value())
         bus = player.get_bus()
         bus.add_signal_watch()
         bus.connect("message", self.on_player_bus, player)
         self.player = player
-        self.playing_path = path
+        self.loaded_path = path
+        self.duration = wav_duration(path)
+        self.adj.set_upper(max(self.duration, 1.0))
+        self.adj.set_value(0)
+        self.cur_label.set_text("00:00")
+        self.tot_label.set_text(fmt(self.duration))
+        self.player_title.set_text(os.path.basename(path))
+        self.revealer.set_reveal_child(True)
         player.set_state(Gst.State.PLAYING)
+        self.playing = True
         self.update_play_icons()
+
+    def toggle_pause(self):
+        if self.player is None:
+            return
+        if self.playing:
+            self.player.set_state(Gst.State.PAUSED)
+            self.playing = False
+        else:
+            self.player.set_state(Gst.State.PLAYING)
+            self.playing = True
+        self.update_play_icons()
+
+    def current_position(self):
+        if self.player is None:
+            return 0.0
+        ok, pos = self.player.query_position(Gst.Format.TIME)
+        return pos / Gst.SECOND if ok else self.adj.get_value()
+
+    def seek_to(self, secs):
+        if self.player is None:
+            return
+        secs = max(0.0, min(secs, self.duration))
+        self.player.seek_simple(
+            Gst.Format.TIME,
+            Gst.SeekFlags.FLUSH | Gst.SeekFlags.ACCURATE,
+            int(secs * Gst.SECOND),
+        )
+        self.adj.set_value(secs)
+        self.cur_label.set_text(fmt(secs))
+
+    def seek_relative(self, delta):
+        self.seek_to(self.current_position() + delta)
+
+    def on_seek(self, _scale, _scroll, value):
+        # fires only for user input (drag, click, keyboard), not set_value()
+        self.seek_to(value)
+        return False
+
+    def on_seek_press(self, *_):
+        self.seek_dragging = True
+        return False
+
+    def on_seek_release(self, *_):
+        self.seek_dragging = False
+        return False
+
+    def on_volume(self, _btn, value):
+        if self.player is not None:
+            self.player.set_property("volume", value)
+
+    def step_track(self, offset):
+        if self.loaded_path not in self.files:
+            return
+        i = self.files.index(self.loaded_path) + offset
+        if 0 <= i < len(self.files):
+            self.load_track(self.files[i])
+
+    def on_prev(self, *_):
+        # more than 3s in: restart the track, like a normal media player
+        if self.current_position() > 3:
+            self.seek_to(0)
+        else:
+            self.step_track(-1)
+
+    def on_next(self, *_):
+        self.step_track(1)
+
+    def player_tick(self):
+        if self.player is None:
+            return True
+        ok, dur = self.player.query_duration(Gst.Format.TIME)
+        if ok and dur > 0:
+            d = dur / Gst.SECOND
+            if abs(d - self.duration) > 0.2:
+                self.duration = d
+                self.adj.set_upper(max(d, 1.0))
+                self.tot_label.set_text(fmt(d))
+        if not self.seek_dragging:
+            pos = self.current_position()
+            self.adj.set_value(min(pos, self.duration))
+            self.cur_label.set_text(fmt(pos))
+        else:
+            self.cur_label.set_text(fmt(self.adj.get_value()))
+        return True
 
     def on_player_bus(self, _bus, msg, player):
         if player is not self.player:
             return
-        if msg.type in (Gst.MessageType.EOS, Gst.MessageType.ERROR):
-            if msg.type == Gst.MessageType.ERROR:
-                err, _ = msg.parse_error()
-                self.set_status("Playback error: " + err.message)
+        if msg.type == Gst.MessageType.EOS:
+            # rewind and wait, so the user can hit play again
+            player.seek_simple(
+                Gst.Format.TIME, Gst.SeekFlags.FLUSH, 0
+            )
+            player.set_state(Gst.State.PAUSED)
+            self.playing = False
+            self.adj.set_value(0)
+            self.cur_label.set_text("00:00")
+            self.update_play_icons()
+        elif msg.type == Gst.MessageType.ERROR:
+            err, _ = msg.parse_error()
             self.stop_playback()
+            self.set_status("Playback error: " + err.message)
 
     def stop_playback(self):
+        """Unload the current track and hide the player."""
         if self.player is not None:
             try:
                 self.player.get_bus().remove_signal_watch()
@@ -669,17 +952,35 @@ class Recorder(Gtk.Window):
                 pass
             self.player.set_state(Gst.State.NULL)
             self.player = None
-        self.playing_path = None
+        self.loaded_path = None
+        self.playing = False
+        self.revealer.set_reveal_child(False)
         self.update_play_icons()
 
     def update_play_icons(self):
         for path, img in self.play_buttons.items():
-            name = (
-                "media-playback-stop-symbolic"
-                if path == self.playing_path
-                else "media-playback-start-symbolic"
+            active = path == self.loaded_path and self.playing
+            img.set_from_icon_name(
+                "media-playback-pause-symbolic"
+                if active
+                else "media-playback-start-symbolic",
+                Gtk.IconSize.BUTTON,
             )
-            img.set_from_icon_name(name, Gtk.IconSize.BUTTON)
+        for path, row in self.rows.items():
+            ctx = row.get_style_context()
+            if path == self.loaded_path:
+                ctx.add_class("now")
+            else:
+                ctx.remove_class("now")
+        self.play_img.set_from_icon_name(
+            "media-playback-pause-symbolic"
+            if self.playing
+            else "media-playback-start-symbolic",
+            Gtk.IconSize.LARGE_TOOLBAR,
+        )
+        i = self.files.index(self.loaded_path) if self.loaded_path in self.files else -1
+        self.prev_btn.set_sensitive(i >= 0)
+        self.next_btn.set_sensitive(0 <= i < len(self.files) - 1)
 
     # -------------------------------------------------------------- quit
     def on_quit(self, *_):
