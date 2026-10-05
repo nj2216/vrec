@@ -39,7 +39,7 @@ _here = os.path.dirname(os.path.abspath(__file__))
 _local_icon = os.path.join(_here, "vrec.svg")
 
 SAVE_DIR = os.path.expanduser("~/Recordings")
-VERSION = "1.0.0"
+VERSION = "1.1.3"
 WEBSITE = "https://github.com/nj2216/vrec"
 SEEK_STEP = 10  # seconds for the skip back / forward buttons
 
