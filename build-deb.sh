@@ -10,6 +10,7 @@ rm -rf "$ROOT"
 mkdir -p "$ROOT/DEBIAN" "$ROOT/usr/bin" "$ROOT/usr/share/applications" "$ROOT/usr/share/icons/hicolor/scalable/apps" dist
 
 install -m 755 vrec.py "$ROOT/usr/bin/vrec"
+sed -i "s/^VERSION = .*/VERSION = \"${VERSION}\"/" "$ROOT/usr/bin/vrec"
 install -m 644 vrec.svg "$ROOT/usr/share/icons/hicolor/scalable/apps/vrec.svg"
 
 cat > "$ROOT/DEBIAN/control" <<EOF

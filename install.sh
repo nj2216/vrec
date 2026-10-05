@@ -6,18 +6,24 @@
 # Uninstall:
 #   curl -fsSL https://raw.githubusercontent.com/nj2216/vrec/main/install.sh | bash -s -- --uninstall
 #
-# Pin a version:  VREC_REF=v1.0.0 curl -fsSL ... | bash
+# Pin a version:  curl -fsSL ... | VREC_REF=v1.1.0 bash   (or VREC_REF=main for the dev branch)
 set -euo pipefail
 
 REPO="nj2216/vrec"
-REF="${VREC_REF:-main}"
+REF="${VREC_REF:-latest}"   # latest release | a tag like v1.1.0 | main
 BIN_DIR="${HOME}/.local/bin"
 APP_DIR="${HOME}/.local/share/applications"
 BIN="${BIN_DIR}/vrec"
 DESKTOP="${APP_DIR}/vrec.desktop"
 ICON_DIR="${HOME}/.local/share/icons/hicolor/scalable/apps"
 ICON="${ICON_DIR}/vrec.svg"
-BASE_URL="https://raw.githubusercontent.com/${REPO}/${REF}"
+if [[ "$REF" == "latest" ]]; then
+    BASE_URL="https://github.com/${REPO}/releases/latest/download"
+elif [[ "$REF" == "main" ]]; then
+    BASE_URL="https://raw.githubusercontent.com/${REPO}/main"
+else
+    BASE_URL="https://github.com/${REPO}/releases/download/${REF}"
+fi
 URL="${BASE_URL}/vrec.py"
 ICON_URL="${BASE_URL}/vrec.svg"
 

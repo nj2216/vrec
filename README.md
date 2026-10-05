@@ -13,7 +13,12 @@ A small GTK3 voice recorder for Xubuntu/XFCE (works on any GTK3 Linux desktop).
 curl -fsSL https://raw.githubusercontent.com/nj2216/vrec/main/install.sh | bash
 ```
 
-Installs to `~/.local/bin/vrec` and adds an app-menu entry. Pin a version with `VREC_REF=v1.0.0`.
+Installs the latest release to `~/.local/bin/vrec` and adds an app-menu entry.
+Pin a version (or use the dev branch) with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nj2216/vrec/main/install.sh | VREC_REF=v1.1.0 bash
+```
 
 Uninstall:
 
