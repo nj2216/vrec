@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Voice Recorder for Xubuntu/XFCE (GTK3 + GStreamer).
+"""VRec - Voice Recorder for Xubuntu/XFCE (GTK3 + GStreamer).
 
 Features: mic picker, live level meter (works before you hit record),
 pause/resume, recordings list with play / delete / open folder.
@@ -203,7 +203,7 @@ def peak_db(structure):
 
 class Recorder(Gtk.Window):
     def __init__(self):
-        super().__init__(title="Voice Recorder")
+        super().__init__(title="VRec")
         self.set_default_size(420, 760)
         if os.path.exists(_local_icon):  # running from a source checkout
             try:
@@ -254,7 +254,7 @@ class Recorder(Gtk.Window):
     def build_ui(self):
         header = Gtk.HeaderBar()
         header.set_show_close_button(True)
-        header.set_title("Voice Recorder")
+        header.set_title("VRec")
         folder_btn = Gtk.Button.new_from_icon_name(
             "folder-open-symbolic", Gtk.IconSize.BUTTON
         )
@@ -440,7 +440,7 @@ class Recorder(Gtk.Window):
 
     def on_about(self, *_):
         dlg = Gtk.AboutDialog(transient_for=self, modal=True)
-        dlg.set_program_name("Voice Recorder")
+        dlg.set_program_name("VRec")
         dlg.set_version(VERSION)
         dlg.set_logo_icon_name(ICON_NAME)
         dlg.set_comments(
